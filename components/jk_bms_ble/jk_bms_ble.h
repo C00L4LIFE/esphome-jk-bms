@@ -242,6 +242,8 @@ class JkBmsBle :
   void set_discharging_power_sensor(sensor::Sensor *discharging_power_sensor) {
     discharging_power_sensor_ = discharging_power_sensor;
   }
+  void set_energy_in_sensor(sensor::Sensor *energy_in_sensor) { energy_in_sensor_ = energy_in_sensor; }
+  void set_energy_out_sensor(sensor::Sensor *energy_out_sensor) { energy_out_sensor_ = energy_out_sensor; }
   void set_temperature_sensor(uint8_t temperature, sensor::Sensor *temperature_sensor) {
     this->temperatures_[temperature].temperature_sensor_ = temperature_sensor;
   }
@@ -478,6 +480,8 @@ class JkBmsBle :
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *charging_power_sensor_{nullptr};
   sensor::Sensor *discharging_power_sensor_{nullptr};
+  sensor::Sensor *energy_in_sensor_{nullptr};
+  sensor::Sensor *energy_out_sensor_{nullptr};
   sensor::Sensor *mosfet_temperature_sensor_{nullptr};
   sensor::Sensor *state_of_charge_sensor_{nullptr};
   sensor::Sensor *state_of_health_sensor_{nullptr};
@@ -549,6 +553,11 @@ class JkBmsBle :
 #endif
   uint32_t last_cell_info_{0};
   uint32_t throttle_{0};
+
+  // JK BMS doesn't report cumulative energy, so it's integrated on-device from power (P * dt) on every decoded frame.
+  double energy_in_wh_{0.0};
+  double energy_out_wh_{0.0};
+  uint32_t last_energy_calc_time_{0};
 
   void decode_(const std::vector<uint8_t> &data);
   void decode_logbook_(const std::vector<uint8_t> &data);

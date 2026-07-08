@@ -418,6 +418,8 @@ void JkBmsBle::dump_config() {  // NOLINT(google-readability-function-size,reada
   LOG_SENSOR("", "Power", this->power_sensor_);
   LOG_SENSOR("", "Charging Power", this->charging_power_sensor_);
   LOG_SENSOR("", "Discharging Power", this->discharging_power_sensor_);
+  LOG_SENSOR("", "Energy In", this->energy_in_sensor_);
+  LOG_SENSOR("", "Energy Out", this->energy_out_sensor_);
   LOG_SENSOR("", "Mosfet Temperature", this->mosfet_temperature_sensor_);
   LOG_SENSOR("", "Temperature Sensor 1", this->temperatures_[0].temperature_sensor_);
   LOG_SENSOR("", "Temperature Sensor 2", this->temperatures_[1].temperature_sensor_);
@@ -834,6 +836,21 @@ void JkBmsBle::decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   this->publish_state_(this->power_sensor_, power);
   this->publish_state_(this->charging_power_sensor_, std::max(0.0f, power));               // 500W vs 0W -> 500W
   this->publish_state_(this->discharging_power_sensor_, std::abs(std::min(0.0f, power)));  // -500W vs 0W -> 500W
+
+  // Energy in/out (Wh) isn't reported by the BMS, so it's integrated here from power (P * dt) every time a
+  // cell info frame is decoded (the BMS pushes one roughly every second).
+  if (this->last_energy_calc_time_ != 0) {
+    float elapsed_h = (float) (now - this->last_energy_calc_time_) / 3600000.0f;  // ms -> h
+    float energy_wh = power * elapsed_h;
+    if (energy_wh > 0.0f) {
+      this->energy_in_wh_ += energy_wh;
+    } else {
+      this->energy_out_wh_ += -energy_wh;
+    }
+  }
+  this->last_energy_calc_time_ = now;
+  this->publish_state_(this->energy_in_sensor_, (float) this->energy_in_wh_);
+  this->publish_state_(this->energy_out_sensor_, (float) this->energy_out_wh_);
 
   // 130   2   0xBE 0x00              Temperature Sensor 1  0.1          °C
   this->publish_state_(this->temperatures_[0].temperature_sensor_,
@@ -1927,6 +1944,10 @@ void JkBmsBle::publish_device_unavailable_() {
   this->publish_state_(total_runtime_sensor_, NAN);
   this->publish_state_(balancing_current_sensor_, NAN);
   this->publish_state_(heating_current_sensor_, NAN);
+
+  // Don't reset the accumulated Wh totals, just the timestamp, so the next reconnect doesn't
+  // integrate power over the time spent offline.
+  this->last_energy_calc_time_ = 0;
 
   for (auto &cell : this->cells_) {
     this->publish_state_(cell.cell_voltage_sensor_, NAN);

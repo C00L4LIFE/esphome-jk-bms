@@ -270,6 +270,10 @@ sensor:
       name: "charging power"
     discharging_power:
       name: "discharging power"
+    energy_in:
+      name: "energy in"
+    energy_out:
+      name: "energy out"
     temperature_sensor_1:
       name: "temperature sensor 1"
     temperature_sensor_2:
