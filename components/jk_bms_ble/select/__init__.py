@@ -19,6 +19,12 @@ DEPENDENCIES = ["jk_bms_ble"]
 
 CODEOWNERS = ["@syssi"]
 
+# Module-level (not per to_code() call) so the guard below still works when
+# multiple jk_bms_ble instances each have their own `select:` block (e.g. a
+# dual/multi-BMS setup) - otherwise every block emits its own copy of the
+# shared constexpr arrays and the C++ build fails with "redefinition of ...".
+_EMITTED_ARRAYS = set()
+
 UART_PROTOCOL_OPTIONS = [
     "4G-GPS Remote module Common protocol V4.2",
     "JK BMS RS485 Modbus V1.0",
@@ -196,7 +202,6 @@ CONFIG_SCHEMA = JK_BMS_BLE_COMPONENT_SCHEMA.extend(
 
 async def to_code(config):
     hub = await cg.get_variable(config[CONF_JK_BMS_BLE_ID])
-    emitted_arrays = set()
     for key, (address, options, table_setter, arr_name, data_len) in SELECTS.items():
         if key not in config:
             continue
@@ -213,8 +218,8 @@ async def to_code(config):
         # preserving flash (.rodata) placement on embedded targets.
         # emitted_arrays guards against double-definition when two selects share a table
         # (e.g. uart1_protocol and uart2_protocol both use UART_PROTOCOL_OPTIONS).
-        if arr_name not in emitted_arrays:
-            emitted_arrays.add(arr_name)
+        if arr_name not in _EMITTED_ARRAYS:
+            _EMITTED_ARRAYS.add(arr_name)
             entries = ", ".join(f'"{o}"' for o in options)
             cg.add_global(
                 cg.RawStatement(
