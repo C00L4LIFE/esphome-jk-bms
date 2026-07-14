@@ -61,6 +61,19 @@ api:
 #   password: !secret mqtt_password
 #   id: mqtt_client
 
+# Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.local
+web_server:
+  version: 3
+
+# Needed for the "charge/discharge finish time" text sensors below. SNTP works standalone
+# (WiFi + internet only). If you use Home Assistant you can use its clock instead:
+#   - platform: homeassistant
+#     id: rtc_time
+time:
+  - platform: sntp
+    id: rtc_time
+    timezone: America/Port-au-Prince
+
 esp32_ble_tracker:
   scan_parameters:
     active: false
@@ -76,10 +89,12 @@ jk_bms_ble:
     protocol_version: ${bms0_protocol_version}
     throttle: 5s
     id: bms0
+    time_id: rtc_time
   - ble_client_id: client1
     protocol_version: ${bms1_protocol_version}
     throttle: 5s
     id: bms1
+    time_id: rtc_time
 
 binary_sensor:
   - platform: jk_bms_ble
@@ -628,6 +643,12 @@ sensor:
     full_charge_capacity:
       name: "full charge capacity"
       device_id: device0
+    charge_time_remaining:
+      name: "charge time remaining"
+      device_id: device0
+    discharge_time_remaining:
+      name: "discharge time remaining"
+      device_id: device0
     charging_cycles:
       name: "charging cycles"
       device_id: device0
@@ -859,6 +880,12 @@ sensor:
       device_id: device1
     full_charge_capacity:
       name: "full charge capacity"
+      device_id: device1
+    charge_time_remaining:
+      name: "charge time remaining"
+      device_id: device1
+    discharge_time_remaining:
+      name: "discharge time remaining"
       device_id: device1
     charging_cycles:
       name: "charging cycles"
@@ -1111,6 +1138,12 @@ text_sensor:
     battery_type:
       name: "battery type"
       device_id: device0
+    charge_finish_time:
+      name: "charge finish time"
+      device_id: device0
+    discharge_finish_time:
+      name: "discharge finish time"
+      device_id: device0
 
   - platform: jk_bms_ble
     jk_bms_ble_id: bms1
@@ -1137,4 +1170,10 @@ text_sensor:
       device_id: device1
     battery_type:
       name: "battery type"
+      device_id: device1
+    charge_finish_time:
+      name: "charge finish time"
+      device_id: device1
+    discharge_finish_time:
+      name: "discharge finish time"
       device_id: device1
