@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
 #include <cinttypes>
+#include <cmath>
 
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 12, 0)
 #define ADDR_STR(x) x
@@ -431,6 +432,8 @@ void JkBmsBle::dump_config() {  // NOLINT(google-readability-function-size,reada
   LOG_SENSOR("", "State Of Health", this->state_of_health_sensor_);
   LOG_SENSOR("", "Capacity Remaining", this->capacity_remaining_sensor_);
   LOG_SENSOR("", "Full Charge Capacity", this->full_charge_capacity_sensor_);
+  LOG_SENSOR("", "Charge Time Remaining", this->charge_time_remaining_sensor_);
+  LOG_SENSOR("", "Discharge Time Remaining", this->discharge_time_remaining_sensor_);
   LOG_SENSOR("", "Charging Cycles", this->charging_cycles_sensor_);
   LOG_SENSOR("", "Total Charging Cycle Capacity", this->total_charging_cycle_capacity_sensor_);
   LOG_SENSOR("", "Total Runtime", this->total_runtime_sensor_);
@@ -449,6 +452,8 @@ void JkBmsBle::dump_config() {  // NOLINT(google-readability-function-size,reada
   LOG_TEXT_SENSOR("", "Software Version", this->software_version_text_sensor_);
   LOG_TEXT_SENSOR("", "Hardware Version", this->hardware_version_text_sensor_);
   LOG_TEXT_SENSOR("", "Battery Type", this->battery_type_text_sensor_);
+  LOG_TEXT_SENSOR("", "Charge Finish Time", this->charge_finish_time_text_sensor_);
+  LOG_TEXT_SENSOR("", "Discharge Finish Time", this->discharge_finish_time_text_sensor_);
 }
 
 #ifdef USE_ESP32
@@ -893,10 +898,17 @@ void JkBmsBle::decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   this->publish_state_(this->state_of_charge_sensor_, (float) data[141 + offset]);
 
   // 142   4   0x8E 0x0B 0x01 0x00    Capacity_Remain      0.001         Ah
-  this->publish_state_(this->capacity_remaining_sensor_, (float) jk_get_32bit(142 + offset) * 0.001f);
+  float capacity_remaining_ah = (float) jk_get_32bit(142 + offset) * 0.001f;
+  this->publish_state_(this->capacity_remaining_sensor_, capacity_remaining_ah);
 
   // 146   4   0x68 0x3C 0x01 0x00    Nominal_Capacity     0.001         Ah
-  this->publish_state_(this->full_charge_capacity_sensor_, (float) jk_get_32bit(146 + offset) * 0.001f);
+  float full_charge_capacity_ah = (float) jk_get_32bit(146 + offset) * 0.001f;
+  this->publish_state_(this->full_charge_capacity_sensor_, full_charge_capacity_ah);
+
+  // Estimated time remaining (minutes) until fully charged / fully discharged and the expected
+  // wall-clock finish time, derived from the instantaneous current. Only one direction applies at
+  // a time; the other is published as NAN / empty.
+  this->publish_charge_discharge_estimates_(current, capacity_remaining_ah, full_charge_capacity_ah);
 
   // 150   4   0x00 0x00 0x00 0x00    Cycle_Count          1.0
   this->publish_state_(this->charging_cycles_sensor_, (float) jk_get_32bit(150 + offset));
@@ -1903,6 +1915,42 @@ void JkBmsBle::decode_device_info_(const std::vector<uint8_t> &data) {
   // 299  0x1B  CRC
 }
 
+void JkBmsBle::publish_charge_discharge_estimates_(float current, float capacity_remaining_ah,
+                                                     float full_charge_capacity_ah) {
+  // Below this threshold the current reading is treated as noise around zero (idle), which would
+  // otherwise blow up the division into a meaningless huge/negative estimate.
+  static const float CURRENT_THRESHOLD_A = 0.05f;
+
+  float charge_time_remaining_min = NAN;
+  float discharge_time_remaining_min = NAN;
+
+  if (current > CURRENT_THRESHOLD_A) {
+    float remaining_to_full_ah = std::max(0.0f, full_charge_capacity_ah - capacity_remaining_ah);
+    charge_time_remaining_min = remaining_to_full_ah / current * 60.0f;
+  } else if (current < -CURRENT_THRESHOLD_A) {
+    discharge_time_remaining_min = capacity_remaining_ah / -current * 60.0f;
+  }
+
+  this->publish_state_(this->charge_time_remaining_sensor_, charge_time_remaining_min);
+  this->publish_state_(this->discharge_time_remaining_sensor_, discharge_time_remaining_min);
+  this->publish_state_(this->charge_finish_time_text_sensor_, this->format_finish_time_(charge_time_remaining_min));
+  this->publish_state_(this->discharge_finish_time_text_sensor_,
+                       this->format_finish_time_(discharge_time_remaining_min));
+}
+
+std::string JkBmsBle::format_finish_time_(float minutes_remaining) {
+  if (std::isnan(minutes_remaining) || this->time_id_ == nullptr)
+    return "";
+
+  ESPTime now = this->time_id_->now();
+  if (!now.is_valid())
+    return "";
+
+  time_t finish_epoch = now.timestamp + (time_t) (minutes_remaining * 60.0f);
+  ESPTime finish_time = ESPTime::from_epoch_local(finish_epoch);
+  return finish_time.strftime("%Y-%m-%d %H:%M");
+}
+
 void JkBmsBle::track_online_status_() {
   if (this->no_response_count_ < MAX_NO_RESPONSE_COUNT) {
     this->no_response_count_++;
@@ -1939,6 +1987,10 @@ void JkBmsBle::publish_device_unavailable_() {
   this->publish_state_(state_of_health_sensor_, NAN);
   this->publish_state_(capacity_remaining_sensor_, NAN);
   this->publish_state_(full_charge_capacity_sensor_, NAN);
+  this->publish_state_(charge_time_remaining_sensor_, NAN);
+  this->publish_state_(discharge_time_remaining_sensor_, NAN);
+  this->publish_state_(charge_finish_time_text_sensor_, "");
+  this->publish_state_(discharge_finish_time_text_sensor_, "");
   this->publish_state_(charging_cycles_sensor_, NAN);
   this->publish_state_(total_charging_cycle_capacity_sensor_, NAN);
   this->publish_state_(total_runtime_sensor_, NAN);

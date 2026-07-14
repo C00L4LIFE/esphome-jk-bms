@@ -20,6 +20,7 @@ from esphome.const import (
     UNIT_AMPERE,
     UNIT_CELSIUS,
     UNIT_EMPTY,
+    UNIT_MINUTE,
     UNIT_OHM,
     UNIT_PERCENT,
     UNIT_SECOND,
@@ -58,6 +59,8 @@ CONF_CHARGING_CYCLES = "charging_cycles"
 CONF_TOTAL_CHARGING_CYCLE_CAPACITY = "total_charging_cycle_capacity"
 CONF_TOTAL_RUNTIME = "total_runtime"
 CONF_BALANCING_CURRENT = "balancing_current"
+CONF_CHARGE_TIME_REMAINING = "charge_time_remaining"
+CONF_DISCHARGE_TIME_REMAINING = "discharge_time_remaining"
 CONF_EMERGENCY_TIME_COUNTDOWN = "emergency_time_countdown"
 CONF_SMART_SLEEP_COUNTDOWN = "smart_sleep_countdown"
 CONF_HEATING_CURRENT = "heating_current"
@@ -82,6 +85,8 @@ ICON_CELL_RESISTANCE = "mdi:omega"
 ICON_BALANCER = "mdi:seesaw"
 ICON_CHARGE_STATUS_ID = "mdi:battery-clock"
 ICON_CHARGE_STATUS_TIME_ELAPSED = "mdi:timer-outline"
+ICON_CHARGE_TIME_REMAINING = "mdi:battery-clock"
+ICON_DISCHARGE_TIME_REMAINING = "mdi:battery-clock-outline"
 
 CELL_VOLTAGES = [f"cell_voltage_{i}" for i in range(1, 33)]
 CELL_RESISTANCES = [f"cell_resistance_{i}" for i in range(1, 33)]
@@ -269,6 +274,20 @@ SENSOR_DEFS = {
         "icon": ICON_CURRENT_DC,
         "accuracy_decimals": 2,
         "device_class": DEVICE_CLASS_CURRENT,
+        "state_class": STATE_CLASS_MEASUREMENT,
+    },
+    CONF_CHARGE_TIME_REMAINING: {
+        "unit_of_measurement": UNIT_MINUTE,
+        "icon": ICON_CHARGE_TIME_REMAINING,
+        "accuracy_decimals": 0,
+        "device_class": DEVICE_CLASS_EMPTY,
+        "state_class": STATE_CLASS_MEASUREMENT,
+    },
+    CONF_DISCHARGE_TIME_REMAINING: {
+        "unit_of_measurement": UNIT_MINUTE,
+        "icon": ICON_DISCHARGE_TIME_REMAINING,
+        "accuracy_decimals": 0,
+        "device_class": DEVICE_CLASS_EMPTY,
         "state_class": STATE_CLASS_MEASUREMENT,
     },
     CONF_EMERGENCY_TIME_COUNTDOWN: {

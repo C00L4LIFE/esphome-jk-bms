@@ -9,6 +9,7 @@
 #include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/time/real_time_clock.h"
 
 #ifdef USE_ESP32
 #include "esphome/components/ble_client/ble_client.h"
@@ -262,6 +263,12 @@ class JkBmsBle :
   void set_full_charge_capacity_sensor(sensor::Sensor *full_charge_capacity_sensor) {
     full_charge_capacity_sensor_ = full_charge_capacity_sensor;
   }
+  void set_charge_time_remaining_sensor(sensor::Sensor *charge_time_remaining_sensor) {
+    charge_time_remaining_sensor_ = charge_time_remaining_sensor;
+  }
+  void set_discharge_time_remaining_sensor(sensor::Sensor *discharge_time_remaining_sensor) {
+    discharge_time_remaining_sensor_ = discharge_time_remaining_sensor;
+  }
   void set_charging_cycles_sensor(sensor::Sensor *charging_cycles_sensor) {
     charging_cycles_sensor_ = charging_cycles_sensor;
   }
@@ -328,6 +335,13 @@ class JkBmsBle :
   void set_battery_type_text_sensor(text_sensor::TextSensor *battery_type_text_sensor) {
     battery_type_text_sensor_ = battery_type_text_sensor;
   }
+  void set_charge_finish_time_text_sensor(text_sensor::TextSensor *charge_finish_time_text_sensor) {
+    charge_finish_time_text_sensor_ = charge_finish_time_text_sensor;
+  }
+  void set_discharge_finish_time_text_sensor(text_sensor::TextSensor *discharge_finish_time_text_sensor) {
+    discharge_finish_time_text_sensor_ = discharge_finish_time_text_sensor;
+  }
+  void set_time_id(time::RealTimeClock *time_id) { time_id_ = time_id; }
 
   void set_charging_switch(switch_::Switch *charging_switch) { charging_switch_ = charging_switch; }
   void set_discharging_switch(switch_::Switch *discharging_switch) { discharging_switch_ = discharging_switch; }
@@ -487,6 +501,8 @@ class JkBmsBle :
   sensor::Sensor *state_of_health_sensor_{nullptr};
   sensor::Sensor *capacity_remaining_sensor_{nullptr};
   sensor::Sensor *full_charge_capacity_sensor_{nullptr};
+  sensor::Sensor *charge_time_remaining_sensor_{nullptr};
+  sensor::Sensor *discharge_time_remaining_sensor_{nullptr};
   sensor::Sensor *charging_cycles_sensor_{nullptr};
   sensor::Sensor *total_charging_cycle_capacity_sensor_{nullptr};
   sensor::Sensor *total_runtime_sensor_{nullptr};
@@ -543,6 +559,10 @@ class JkBmsBle :
   text_sensor::TextSensor *software_version_text_sensor_{nullptr};
   text_sensor::TextSensor *hardware_version_text_sensor_{nullptr};
   text_sensor::TextSensor *battery_type_text_sensor_{nullptr};
+  text_sensor::TextSensor *charge_finish_time_text_sensor_{nullptr};
+  text_sensor::TextSensor *discharge_finish_time_text_sensor_{nullptr};
+
+  time::RealTimeClock *time_id_{nullptr};
 
   std::vector<uint8_t> frame_buffer_;
   bool status_notification_received_ = false;
@@ -579,6 +599,9 @@ class JkBmsBle :
   std::string error_bits_to_string_(uint32_t bitmask, const char *const *errors, uint8_t errors_size);
   std::string charge_status_id_to_string_(uint8_t status);
   std::string battery_type_id_to_string_(uint8_t code);
+  void publish_charge_discharge_estimates_(float current, float capacity_remaining_ah,
+                                            float full_charge_capacity_ah);
+  std::string format_finish_time_(float minutes_remaining);
 
   std::string format_total_runtime_(const uint32_t value) {
     int seconds = (int) value;

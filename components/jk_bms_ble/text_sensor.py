@@ -17,11 +17,15 @@ CONF_CHARGE_STATUS = "charge_status"
 CONF_SOFTWARE_VERSION = "software_version"
 CONF_HARDWARE_VERSION = "hardware_version"
 CONF_BATTERY_TYPE = "battery_type"
+CONF_CHARGE_FINISH_TIME = "charge_finish_time"
+CONF_DISCHARGE_FINISH_TIME = "discharge_finish_time"
 
 ICON_ERRORS = "mdi:alert-circle-outline"
 ICON_BALANCER_STATUS = "mdi:heart-pulse"
 ICON_CHARGE_STATUS = "mdi:battery-clock"
 ICON_BATTERY_TYPE = "mdi:battery-heart-variant"
+ICON_CHARGE_FINISH_TIME = "mdi:calendar-clock"
+ICON_DISCHARGE_FINISH_TIME = "mdi:calendar-clock-outline"
 
 TEXT_SENSORS = [
     CONF_ERRORS,
@@ -32,6 +36,8 @@ TEXT_SENSORS = [
     CONF_SOFTWARE_VERSION,
     CONF_HARDWARE_VERSION,
     CONF_BATTERY_TYPE,
+    CONF_CHARGE_FINISH_TIME,
+    CONF_DISCHARGE_FINISH_TIME,
 ]
 
 _RENAMED_TEXT_SENSORS = {
@@ -69,6 +75,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BATTERY_TYPE): text_sensor.text_sensor_schema(
                 icon=ICON_BATTERY_TYPE,
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            # Requires `time_id` to be set on the `jk_bms_ble:` hub, otherwise these stay empty.
+            cv.Optional(CONF_CHARGE_FINISH_TIME): text_sensor.text_sensor_schema(
+                icon=ICON_CHARGE_FINISH_TIME,
+            ),
+            cv.Optional(CONF_DISCHARGE_FINISH_TIME): text_sensor.text_sensor_schema(
+                icon=ICON_DISCHARGE_FINISH_TIME,
             ),
         }
     ),

@@ -51,6 +51,19 @@ api:
 #   password: !secret mqtt_password
 #   id: mqtt_client
 
+# Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.local
+web_server:
+  version: 3
+
+# Needed for the "charge/discharge finish time" text sensors below. SNTP works standalone
+# (WiFi + internet only). If you use Home Assistant you can use its clock instead:
+#   - platform: homeassistant
+#     id: rtc_time
+time:
+  - platform: sntp
+    id: rtc_time
+    timezone: America/Port-au-Prince
+
 esp32_ble_tracker:
   scan_parameters:
     active: false
@@ -64,6 +77,7 @@ jk_bms_ble:
     protocol_version: ${protocol_version}
     throttle: 5s
     id: bms0
+    time_id: rtc_time
 
 binary_sensor:
   - platform: jk_bms_ble
@@ -292,6 +306,10 @@ sensor:
       name: "capacity remaining"
     full_charge_capacity:
       name: "full charge capacity"
+    charge_time_remaining:
+      name: "charge time remaining"
+    discharge_time_remaining:
+      name: "discharge time remaining"
     charging_cycles:
       name: "charging cycles"
     total_charging_cycle_capacity:
@@ -329,3 +347,7 @@ text_sensor:
       name: "software version"
     hardware_version:
       name: "hardware version"
+    charge_finish_time:
+      name: "charge finish time"
+    discharge_finish_time:
+      name: "discharge finish time"
