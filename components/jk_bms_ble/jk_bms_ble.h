@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -245,6 +246,12 @@ class JkBmsBle :
   }
   void set_energy_in_sensor(sensor::Sensor *energy_in_sensor) { energy_in_sensor_ = energy_in_sensor; }
   void set_energy_out_sensor(sensor::Sensor *energy_out_sensor) { energy_out_sensor_ = energy_out_sensor; }
+  void set_energy_remaining_sensor(sensor::Sensor *energy_remaining_sensor) {
+    energy_remaining_sensor_ = energy_remaining_sensor;
+  }
+  void set_energy_capacity_sensor(sensor::Sensor *energy_capacity_sensor) {
+    energy_capacity_sensor_ = energy_capacity_sensor;
+  }
   void set_temperature_sensor(uint8_t temperature, sensor::Sensor *temperature_sensor) {
     this->temperatures_[temperature].temperature_sensor_ = temperature_sensor;
   }
@@ -496,6 +503,8 @@ class JkBmsBle :
   sensor::Sensor *discharging_power_sensor_{nullptr};
   sensor::Sensor *energy_in_sensor_{nullptr};
   sensor::Sensor *energy_out_sensor_{nullptr};
+  sensor::Sensor *energy_remaining_sensor_{nullptr};
+  sensor::Sensor *energy_capacity_sensor_{nullptr};
   sensor::Sensor *mosfet_temperature_sensor_{nullptr};
   sensor::Sensor *state_of_charge_sensor_{nullptr};
   sensor::Sensor *state_of_health_sensor_{nullptr};
@@ -578,6 +587,23 @@ class JkBmsBle :
   double energy_in_wh_{0.0};
   double energy_out_wh_{0.0};
   uint32_t last_energy_calc_time_{0};
+
+  // Battery type code (0x00: LFP, 0x01: Li-ion, 0x02: LTO), -1 until reported by the BMS.
+  // Used to derive the nominal cell voltage for the energy capacity estimation.
+  int16_t battery_type_id_{-1};
+
+  float nominal_cell_voltage_from_battery_type_() {
+    switch (this->battery_type_id_) {
+      case 0x00:
+        return 3.2f;  // LiFePO4
+      case 0x01:
+        return 3.6f;  // Li-ion (NMC/NCA)
+      case 0x02:
+        return 2.4f;  // LTO
+      default:
+        return NAN;
+    }
+  }
 
   void decode_(const std::vector<uint8_t> &data);
   void decode_logbook_(const std::vector<uint8_t> &data);

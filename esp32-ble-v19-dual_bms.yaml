@@ -610,6 +610,12 @@ sensor:
     energy_out:
       name: "energy out"
       device_id: device0
+    energy_remaining:
+      name: "energy remaining"
+      device_id: device0
+    energy_capacity:
+      name: "energy capacity"
+      device_id: device0
     temperature_sensor_1:
       name: "temperature sensor 1"
       device_id: device0
@@ -847,6 +853,12 @@ sensor:
       device_id: device1
     energy_out:
       name: "energy out"
+      device_id: device1
+    energy_remaining:
+      name: "energy remaining"
+      device_id: device1
+    energy_capacity:
+      name: "energy capacity"
       device_id: device1
     temperature_sensor_1:
       name: "temperature sensor 1"

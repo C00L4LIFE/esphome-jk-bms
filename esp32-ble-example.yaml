@@ -288,6 +288,10 @@ sensor:
       name: "energy in"
     energy_out:
       name: "energy out"
+    energy_remaining:
+      name: "energy remaining"
+    energy_capacity:
+      name: "energy capacity"
     temperature_sensor_1:
       name: "temperature sensor 1"
     temperature_sensor_2:

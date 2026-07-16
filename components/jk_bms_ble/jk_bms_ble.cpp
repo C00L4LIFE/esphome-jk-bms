@@ -421,6 +421,8 @@ void JkBmsBle::dump_config() {  // NOLINT(google-readability-function-size,reada
   LOG_SENSOR("", "Discharging Power", this->discharging_power_sensor_);
   LOG_SENSOR("", "Energy In", this->energy_in_sensor_);
   LOG_SENSOR("", "Energy Out", this->energy_out_sensor_);
+  LOG_SENSOR("", "Energy Remaining", this->energy_remaining_sensor_);
+  LOG_SENSOR("", "Energy Capacity", this->energy_capacity_sensor_);
   LOG_SENSOR("", "Mosfet Temperature", this->mosfet_temperature_sensor_);
   LOG_SENSOR("", "Temperature Sensor 1", this->temperatures_[0].temperature_sensor_);
   LOG_SENSOR("", "Temperature Sensor 2", this->temperatures_[1].temperature_sensor_);
@@ -904,6 +906,19 @@ void JkBmsBle::decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   // 146   4   0x68 0x3C 0x01 0x00    Nominal_Capacity     0.001         Ah
   float full_charge_capacity_ah = (float) jk_get_32bit(146 + offset) * 0.001f;
   this->publish_state_(this->full_charge_capacity_sensor_, full_charge_capacity_ah);
+
+  // Energy remaining (Wh) derived from the remaining capacity and the actual battery voltage
+  this->publish_state_(this->energy_remaining_sensor_, capacity_remaining_ah * total_voltage);
+
+  // Energy capacity (Wh) derived from the full charge capacity, the enabled cell count and the
+  // nominal cell voltage of the battery chemistry (LFP: 3.2V, Li-ion: 3.6V, LTO: 2.4V). The
+  // battery type code is only part of the JK02_32S cell info frame; NAN until it's known.
+  if (frame_version == FRAME_VERSION_JK02_32S) {
+    this->battery_type_id_ = data[243 + offset];
+  }
+  float nominal_cell_voltage = this->nominal_cell_voltage_from_battery_type_();
+  this->publish_state_(this->energy_capacity_sensor_,
+                       full_charge_capacity_ah * (float) cells_enabled * nominal_cell_voltage);
 
   // Estimated time remaining (minutes) until fully charged / fully discharged and the expected
   // wall-clock finish time, derived from the instantaneous current. Only one direction applies at
@@ -1987,6 +2002,8 @@ void JkBmsBle::publish_device_unavailable_() {
   this->publish_state_(state_of_health_sensor_, NAN);
   this->publish_state_(capacity_remaining_sensor_, NAN);
   this->publish_state_(full_charge_capacity_sensor_, NAN);
+  this->publish_state_(energy_remaining_sensor_, NAN);
+  this->publish_state_(energy_capacity_sensor_, NAN);
   this->publish_state_(charge_time_remaining_sensor_, NAN);
   this->publish_state_(discharge_time_remaining_sensor_, NAN);
   this->publish_state_(charge_finish_time_text_sensor_, "");

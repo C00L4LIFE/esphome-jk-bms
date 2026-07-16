@@ -8,6 +8,7 @@ from esphome.const import (
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_EMPTY,
     DEVICE_CLASS_ENERGY,
+    DEVICE_CLASS_ENERGY_STORAGE,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
     DEVICE_CLASS_VOLTAGE,
@@ -45,6 +46,8 @@ CONF_CHARGING_POWER = "charging_power"
 CONF_DISCHARGING_POWER = "discharging_power"
 CONF_ENERGY_IN = "energy_in"
 CONF_ENERGY_OUT = "energy_out"
+CONF_ENERGY_REMAINING = "energy_remaining"
+CONF_ENERGY_CAPACITY = "energy_capacity"
 CONF_TEMPERATURE_SENSOR_1 = "temperature_sensor_1"
 CONF_TEMPERATURE_SENSOR_2 = "temperature_sensor_2"
 CONF_TEMPERATURE_SENSOR_3 = "temperature_sensor_3"
@@ -214,6 +217,20 @@ SENSOR_DEFS = {
         "accuracy_decimals": 2,
         "device_class": DEVICE_CLASS_ENERGY,
         "state_class": STATE_CLASS_TOTAL_INCREASING,
+    },
+    CONF_ENERGY_REMAINING: {
+        "unit_of_measurement": UNIT_WATT_HOURS,
+        "icon": ICON_CAPACITY_REMAINING,
+        "accuracy_decimals": 2,
+        "device_class": DEVICE_CLASS_ENERGY_STORAGE,
+        "state_class": STATE_CLASS_MEASUREMENT,
+    },
+    CONF_ENERGY_CAPACITY: {
+        "unit_of_measurement": UNIT_WATT_HOURS,
+        "icon": ICON_CAPACITY,
+        "accuracy_decimals": 2,
+        "device_class": DEVICE_CLASS_ENERGY_STORAGE,
+        "state_class": STATE_CLASS_MEASUREMENT,
     },
     CONF_MOSFET_TEMPERATURE: {
         "unit_of_measurement": UNIT_CELSIUS,
