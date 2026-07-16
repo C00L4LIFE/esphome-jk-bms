@@ -54,6 +54,8 @@ logger:
 
 # If you don't use Home Assistant please remove this `api` section and uncomment the `mqtt` component!
 api:
+  encryption:
+    key: !secret api_encryption_key
 
 # mqtt:
 #   broker: !secret mqtt_host
