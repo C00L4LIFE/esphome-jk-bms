@@ -190,6 +190,34 @@ button:
       name: "factory reset"
       device_id: device1
 
+# Tables circulaires du lissage de puissance batterie (une par BMS). Implémentées à
+# la main (plutôt que sliding_window_moving_average) parce que la taille de fenêtre
+# et l'intervalle du filtre ESPHome sont figés à la compilation, alors qu'ici ils
+# sont réglables à chaud via les numbers "Batterie Lissage ..." ci-dessous.
+globals:
+  - id: pw0_avg_buffer
+    type: float[100]
+  - id: pw0_avg_idx
+    type: int
+    initial_value: '0'
+  - id: pw0_avg_count
+    type: int
+    initial_value: '0'
+  - id: pw0_avg_last_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: pw1_avg_buffer
+    type: float[100]
+  - id: pw1_avg_idx
+    type: int
+    initial_value: '0'
+  - id: pw1_avg_count
+    type: int
+    initial_value: '0'
+  - id: pw1_avg_last_ms
+    type: uint32_t
+    initial_value: '0'
+
 number:
   - platform: jk_bms_ble
     jk_bms_ble_id: bms0
@@ -455,6 +483,38 @@ number:
       name: "heating stop temperature"
       device_id: device1
 
+  # Nombre de lectures moyennées (taille de fenêtre effective), partagé par les
+  # deux tables de lissage bms0/bms1. La table fait toujours 100 cases ; réduire
+  # la fenêtre n'utilise que les N plus récentes.
+  - platform: template
+    name: "Batterie Lissage Fenêtre"
+    id: pw_avg_window
+    min_value: 1
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    mode: box
+    icon: "mdi:chart-bell-curve"
+
+  # Intervalle entre deux lectures, partagé par les deux tables. Fenêtre x
+  # intervalle = durée de lissage (100 x 1 s = ~1 min 40).
+  - platform: template
+    name: "Batterie Lissage Intervalle"
+    id: pw_avg_interval
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 1
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    unit_of_measurement: s
+    mode: box
+    icon: "mdi:timer-outline"
+
 sensor:
   - platform: jk_bms_ble
     jk_bms_ble_id: bms0
@@ -599,6 +659,7 @@ sensor:
       device_id: device0
     power:
       name: "power"
+      id: bms0_power
       device_id: device0
     charging_power:
       name: "charging power"
@@ -843,6 +904,7 @@ sensor:
       device_id: device1
     power:
       name: "power"
+      id: bms1_power
       device_id: device1
     charging_power:
       name: "charging power"
@@ -943,6 +1005,78 @@ sensor:
     can_protocols_enabled_bitmask:
       name: "can protocols enabled bitmask"
       device_id: device1
+
+  # Puissance bms0 signée (+ = charge) lissée sur la table circulaire : une
+  # lecture par intervalle dans la case 0..99 (retour à 0 après 99), moyenne =
+  # somme des cases / nombre de cases ; tant que la table n'est pas pleine,
+  # seules les cases alimentées comptent.
+  - platform: template
+    name: "bms0 power average"
+    id: bms0_power_avg
+    device_id: device0
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      float v = id(bms0_power).state;
+      if (isnan(v)) return {};
+      uint32_t now = millis();
+      uint32_t interval_ms = (uint32_t) id(pw_avg_interval).state * 1000;
+      if (interval_ms < 1000) interval_ms = 1000;
+      if (id(pw0_avg_count) > 0 && (now - id(pw0_avg_last_ms)) < interval_ms)
+        return {};  // pas encore l'heure d'échantillonner
+      id(pw0_avg_last_ms) = now;
+      id(pw0_avg_buffer)[id(pw0_avg_idx)] = v;
+      id(pw0_avg_idx) = (id(pw0_avg_idx) + 1) % 100;
+      if (id(pw0_avg_count) < 100)
+        id(pw0_avg_count) += 1;
+      int window = (int) id(pw_avg_window).state;
+      if (window < 1) window = 1;
+      if (window > 100) window = 100;
+      int n = id(pw0_avg_count) < window ? id(pw0_avg_count) : window;
+      float sum = 0;
+      int pos = id(pw0_avg_idx);
+      for (int i = 0; i < n; i++) {
+        pos = (pos + 99) % 100;  // recule d'une case (les n plus récentes)
+        sum += id(pw0_avg_buffer)[pos];
+      }
+      return sum / n;
+
+  # Puissance bms1 signée (+ = charge) lissée sur sa propre table circulaire,
+  # même mécanisme que bms0 ci-dessus.
+  - platform: template
+    name: "bms1 power average"
+    id: bms1_power_avg
+    device_id: device1
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      float v = id(bms1_power).state;
+      if (isnan(v)) return {};
+      uint32_t now = millis();
+      uint32_t interval_ms = (uint32_t) id(pw_avg_interval).state * 1000;
+      if (interval_ms < 1000) interval_ms = 1000;
+      if (id(pw1_avg_count) > 0 && (now - id(pw1_avg_last_ms)) < interval_ms)
+        return {};  // pas encore l'heure d'échantillonner
+      id(pw1_avg_last_ms) = now;
+      id(pw1_avg_buffer)[id(pw1_avg_idx)] = v;
+      id(pw1_avg_idx) = (id(pw1_avg_idx) + 1) % 100;
+      if (id(pw1_avg_count) < 100)
+        id(pw1_avg_count) += 1;
+      int window = (int) id(pw_avg_window).state;
+      if (window < 1) window = 1;
+      if (window > 100) window = 100;
+      int n = id(pw1_avg_count) < window ? id(pw1_avg_count) : window;
+      float sum = 0;
+      int pos = id(pw1_avg_idx);
+      for (int i = 0; i < n; i++) {
+        pos = (pos + 99) % 100;  // recule d'une case (les n plus récentes)
+        sum += id(pw1_avg_buffer)[pos];
+      }
+      return sum / n;
 
 switch:
   - platform: jk_bms_ble
