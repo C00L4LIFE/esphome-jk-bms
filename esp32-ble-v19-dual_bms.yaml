@@ -22,6 +22,25 @@ esphome:
       name: "${bms0}"
     - id: device1
       name: "${bms1}"
+  on_boot:
+    # Restauration immédiate des compteurs d'énergie depuis la NVS (copie
+    # locale) : les totaux sont corrects dès le boot, même si Home Assistant
+    # est injoignable. La valeur du helper HA, quand elle arrive, ne peut que
+    # relever l'offset (fusion max, voir les imports homeassistant plus bas).
+    priority: -100
+    then:
+      - lambda: |-
+          id(p0in_offset) = id(nvs_p0in);
+          id(p0out_offset) = id(nvs_p0out);
+          id(p1in_offset) = id(nvs_p1in);
+          id(p1out_offset) = id(nvs_p1out);
+
+# Sauvegarde NVS des compteurs : écriture au plus toutes les 6 h (4/jour,
+# usure négligeable sur des décennies) + flush automatique à chaque reboot
+# propre (OTA, restart) par le syncer de préférences. La flash n'est donc
+# sollicitée que rarement, contrairement à une persistance à la seconde.
+preferences:
+  flash_write_interval: 6h
 
 esp32:
   #board: wemos_d1_mini32
@@ -70,11 +89,20 @@ api:
 # one-shot. Pas de composant MQTT : ses ~150 wrappers d'entités obligatoires
 # épuisaient le heap (crash LoadProhibited + échecs de handshake WiFi).
 interval:
-  # Miroir des totaux vers les helpers HA toutes les 30 s. Gardé par les flags
-  # "restored" pour ne jamais écraser la mémoire réseau avec un compteur
-  # repartant de zéro avant restauration.
+  # Toutes les 30 s : (1) copie des totaux dans les globals NVS — sans garde,
+  # car l'offset intègre déjà l'historique NVS dès le boot, le total courant
+  # est donc toujours >= à la valeur stockée ; l'écriture flash réelle reste
+  # limitée par flash_write_interval (6 h) ou au shutdown. (2) Miroir vers les
+  # helpers HA, gardé par les flags "restored" pour ne jamais écraser la
+  # mémoire réseau avec un compteur repartant de zéro avant restauration.
   - interval: 30s
     then:
+      - lambda: |-
+          auto keep = [](float &dst, float v) { if (std::isfinite(v)) dst = v; };
+          keep(id(nvs_p0in), id(bms0_energy_in_total).state);
+          keep(id(nvs_p0out), id(bms0_energy_out_total).state);
+          keep(id(nvs_p1in), id(bms1_energy_in_total).state);
+          keep(id(nvs_p1out), id(bms1_energy_out_total).state);
       - if:
           condition:
             lambda: 'return id(p0in_restored) && id(p0out_restored);'
@@ -260,6 +288,9 @@ button:
           id(p0out_offset) = isnan(out_raw) ? 0 : -out_raw;
           id(p0in_restored) = true;
           id(p0out_restored) = true;
+          id(nvs_p0in) = 0;
+          id(nvs_p0out) = 0;
+          global_preferences->sync();
           id(bms0_energy_in_total).update();
           id(bms0_energy_out_total).update();
       - homeassistant.action:
@@ -285,6 +316,9 @@ button:
           id(p1out_offset) = isnan(out_raw) ? 0 : -out_raw;
           id(p1in_restored) = true;
           id(p1out_restored) = true;
+          id(nvs_p1in) = 0;
+          id(nvs_p1out) = 0;
+          global_preferences->sync();
           id(bms1_energy_in_total).update();
           id(bms1_energy_out_total).update();
       - homeassistant.action:
@@ -352,6 +386,25 @@ globals:
   - id: p1out_restored
     type: bool
     initial_value: 'false'
+  # Copie NVS des totaux (2e source de mémoire, locale). Mise à jour en RAM
+  # toutes les 30 s ; l'écriture flash réelle n'a lieu qu'aux 6 h (voir
+  # preferences:) ou au shutdown propre. restore_value la recharge au boot.
+  - id: nvs_p0in
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: nvs_p0out
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: nvs_p1in
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: nvs_p1out
+    type: float
+    restore_value: true
+    initial_value: '0'
 
 number:
   - platform: jk_bms_ble
@@ -1221,11 +1274,12 @@ sensor:
       }
       return sum / n;
 
-  # Restauration au boot : import des helpers input_number de HA (mémoire
-  # réseau). One-shot par compteur — seule la première valeur valide reçue
-  # après démarrage est adoptée ; les mises à jour suivantes (dont l'écho de
-  # notre propre miroir 30 s) sont ignorées. Une reconnexion API sans reboot
-  # ne re-déclenche donc jamais de fusion : aucun double comptage possible.
+  # Restauration réseau : import des helpers input_number de HA (2e source de
+  # mémoire). One-shot par compteur — seule la première valeur valide reçue
+  # après démarrage est fusionnée ; les mises à jour suivantes (dont l'écho de
+  # notre propre miroir 30 s) sont ignorées. Fusion par max() avec l'offset
+  # déjà restauré de la NVS au boot : la valeur HA ne peut que relever le
+  # total, jamais le faire reculer ni le doubler.
   - platform: homeassistant
     id: ha_p0in
     entity_id: input_number.jk_bms_bms0_energy_in
@@ -1235,7 +1289,7 @@ sensor:
         - lambda: |-
             if (id(p0in_restored)) return;
             if (!std::isfinite(x) || x < 0) return;
-            id(p0in_offset) = x;
+            id(p0in_offset) = std::max(id(p0in_offset), x);
             id(p0in_restored) = true;
   - platform: homeassistant
     id: ha_p0out
@@ -1246,7 +1300,7 @@ sensor:
         - lambda: |-
             if (id(p0out_restored)) return;
             if (!std::isfinite(x) || x < 0) return;
-            id(p0out_offset) = x;
+            id(p0out_offset) = std::max(id(p0out_offset), x);
             id(p0out_restored) = true;
   - platform: homeassistant
     id: ha_p1in
@@ -1257,7 +1311,7 @@ sensor:
         - lambda: |-
             if (id(p1in_restored)) return;
             if (!std::isfinite(x) || x < 0) return;
-            id(p1in_offset) = x;
+            id(p1in_offset) = std::max(id(p1in_offset), x);
             id(p1in_restored) = true;
   - platform: homeassistant
     id: ha_p1out
@@ -1268,7 +1322,7 @@ sensor:
         - lambda: |-
             if (id(p1out_restored)) return;
             if (!std::isfinite(x) || x < 0) return;
-            id(p1out_offset) = x;
+            id(p1out_offset) = std::max(id(p1out_offset), x);
             id(p1out_restored) = true;
 
   # Compteurs d'énergie cumulés persistants : total = offset restauré du helper
