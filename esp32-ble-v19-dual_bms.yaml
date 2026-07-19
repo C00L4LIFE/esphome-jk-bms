@@ -57,11 +57,64 @@ api:
   encryption:
     key: !secret api_encryption_key
 
-# mqtt:
-#   broker: !secret mqtt_host
-#   username: !secret mqtt_username
-#   password: !secret mqtt_password
-#   id: mqtt_client
+# Mémoire réseau des compteurs d'énergie cumulés (energy in/out total) : rien
+# n'est persisté en flash (vieillissement NVS). Le stockage est fait dans
+# 4 helpers input_number de Home Assistant (jamais "unavailable", contrairement
+# aux entités du device qui perdent leur état à chaque reboot) :
+#   input_number.jk_bms_bms0_energy_in    input_number.jk_bms_bms0_energy_out
+#   input_number.jk_bms_bms1_energy_in    input_number.jk_bms_bms1_energy_out
+# L'ESP les met à jour toutes les 30 s par appel de service (nécessite
+# d'autoriser le device à exécuter des actions HA : Paramètres > Appareils >
+# ESPHome > jk-bms > Configurer > "Allow the device to perform actions").
+# Au boot, il relit le helper (import ci-dessous) et restaure l'offset en
+# one-shot. Pas de composant MQTT : ses ~150 wrappers d'entités obligatoires
+# épuisaient le heap (crash LoadProhibited + échecs de handshake WiFi).
+interval:
+  # Miroir des totaux vers les helpers HA toutes les 30 s. Gardé par les flags
+  # "restored" pour ne jamais écraser la mémoire réseau avec un compteur
+  # repartant de zéro avant restauration.
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(p0in_restored) && id(p0out_restored);'
+          then:
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_bms0_energy_in
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms0_energy_in_total).state);
+                    return std::string(buf);
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_bms0_energy_out
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms0_energy_out_total).state);
+                    return std::string(buf);
+      - if:
+          condition:
+            lambda: 'return id(p1in_restored) && id(p1out_restored);'
+          then:
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_bms1_energy_in
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms1_energy_in_total).state);
+                    return std::string(buf);
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_bms1_energy_out
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms1_energy_out_total).state);
+                    return std::string(buf);
 
 # Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.local
 web_server:
@@ -190,6 +243,61 @@ button:
       name: "factory reset"
       device_id: device1
 
+  # Remise à zéro des compteurs d'énergie cumulés (energy in/out total).
+  # L'offset devient l'opposé de l'accumulé C++ courant (le total retombe à 0
+  # sans redémarrer le module) et les helpers HA sont immédiatement remis à 0
+  # pour que l'ancienne valeur ne revienne pas au prochain boot.
+  - platform: template
+    name: "reset energy counters"
+    device_id: device0
+    entity_category: config
+    icon: "mdi:counter"
+    on_press:
+      - lambda: |-
+          float in_raw = id(bms0_energy_in_raw).state;
+          float out_raw = id(bms0_energy_out_raw).state;
+          id(p0in_offset) = isnan(in_raw) ? 0 : -in_raw;
+          id(p0out_offset) = isnan(out_raw) ? 0 : -out_raw;
+          id(p0in_restored) = true;
+          id(p0out_restored) = true;
+          id(bms0_energy_in_total).update();
+          id(bms0_energy_out_total).update();
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_bms0_energy_in
+            value: "0"
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_bms0_energy_out
+            value: "0"
+  - platform: template
+    name: "reset energy counters"
+    device_id: device1
+    entity_category: config
+    icon: "mdi:counter"
+    on_press:
+      - lambda: |-
+          float in_raw = id(bms1_energy_in_raw).state;
+          float out_raw = id(bms1_energy_out_raw).state;
+          id(p1in_offset) = isnan(in_raw) ? 0 : -in_raw;
+          id(p1out_offset) = isnan(out_raw) ? 0 : -out_raw;
+          id(p1in_restored) = true;
+          id(p1out_restored) = true;
+          id(bms1_energy_in_total).update();
+          id(bms1_energy_out_total).update();
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_bms1_energy_in
+            value: "0"
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_bms1_energy_out
+            value: "0"
+
 # Tables circulaires du lissage de puissance batterie (une par BMS). Implémentées à
 # la main (plutôt que sliding_window_moving_average) parce que la taille de fenêtre
 # et l'intervalle du filtre ESPHome sont figés à la compilation, alors qu'ici ils
@@ -217,6 +325,33 @@ globals:
   - id: pw1_avg_last_ms
     type: uint32_t
     initial_value: '0'
+  # Persistance réseau des compteurs d'énergie : offset = valeur restaurée du
+  # broker MQTT au boot (peut devenir négatif après un reset), restored = flag
+  # one-shot pour n'accepter que le premier message retenu après démarrage.
+  - id: p0in_offset
+    type: float
+    initial_value: '0'
+  - id: p0out_offset
+    type: float
+    initial_value: '0'
+  - id: p1in_offset
+    type: float
+    initial_value: '0'
+  - id: p1out_offset
+    type: float
+    initial_value: '0'
+  - id: p0in_restored
+    type: bool
+    initial_value: 'false'
+  - id: p0out_restored
+    type: bool
+    initial_value: 'false'
+  - id: p1in_restored
+    type: bool
+    initial_value: 'false'
+  - id: p1out_restored
+    type: bool
+    initial_value: 'false'
 
 number:
   - platform: jk_bms_ble
@@ -669,9 +804,13 @@ sensor:
       device_id: device0
     energy_in:
       name: "energy in"
+      id: bms0_energy_in_raw
+      internal: true
       device_id: device0
     energy_out:
       name: "energy out"
+      id: bms0_energy_out_raw
+      internal: true
       device_id: device0
     energy_remaining:
       name: "energy remaining"
@@ -914,9 +1053,13 @@ sensor:
       device_id: device1
     energy_in:
       name: "energy in"
+      id: bms1_energy_in_raw
+      internal: true
       device_id: device1
     energy_out:
       name: "energy out"
+      id: bms1_energy_out_raw
+      internal: true
       device_id: device1
     energy_remaining:
       name: "energy remaining"
@@ -1077,6 +1220,117 @@ sensor:
         sum += id(pw1_avg_buffer)[pos];
       }
       return sum / n;
+
+  # Restauration au boot : import des helpers input_number de HA (mémoire
+  # réseau). One-shot par compteur — seule la première valeur valide reçue
+  # après démarrage est adoptée ; les mises à jour suivantes (dont l'écho de
+  # notre propre miroir 30 s) sont ignorées. Une reconnexion API sans reboot
+  # ne re-déclenche donc jamais de fusion : aucun double comptage possible.
+  - platform: homeassistant
+    id: ha_p0in
+    entity_id: input_number.jk_bms_bms0_energy_in
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(p0in_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(p0in_offset) = x;
+            id(p0in_restored) = true;
+  - platform: homeassistant
+    id: ha_p0out
+    entity_id: input_number.jk_bms_bms0_energy_out
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(p0out_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(p0out_offset) = x;
+            id(p0out_restored) = true;
+  - platform: homeassistant
+    id: ha_p1in
+    entity_id: input_number.jk_bms_bms1_energy_in
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(p1in_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(p1in_offset) = x;
+            id(p1in_restored) = true;
+  - platform: homeassistant
+    id: ha_p1out
+    entity_id: input_number.jk_bms_bms1_energy_out
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(p1out_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(p1out_offset) = x;
+            id(p1out_restored) = true;
+
+  # Compteurs d'énergie cumulés persistants : total = offset restauré du helper
+  # HA (mémoire réseau) + accumulé C++ depuis le boot. Le capteur brut repart
+  # de 0 à chaque redémarrage, l'offset absorbe l'historique : le total ne
+  # recule jamais (clamp >= 0, reset explicite via les boutons ci-dessous).
+  - platform: template
+    name: "energy in total"
+    id: bms0_energy_in_total
+    device_id: device0
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms0_energy_in_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(p0in_offset) + raw;
+      return total < 0 ? 0 : total;
+  - platform: template
+    name: "energy out total"
+    id: bms0_energy_out_total
+    device_id: device0
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms0_energy_out_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(p0out_offset) + raw;
+      return total < 0 ? 0 : total;
+  - platform: template
+    name: "energy in total"
+    id: bms1_energy_in_total
+    device_id: device1
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms1_energy_in_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(p1in_offset) + raw;
+      return total < 0 ? 0 : total;
+  - platform: template
+    name: "energy out total"
+    id: bms1_energy_out_total
+    device_id: device1
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms1_energy_out_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(p1out_offset) + raw;
+      return total < 0 ? 0 : total;
 
 switch:
   - platform: jk_bms_ble
