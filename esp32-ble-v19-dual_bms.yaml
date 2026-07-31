@@ -872,16 +872,16 @@ sensor:
       name: "energy capacity"
       device_id: device0
     temperature_sensor_1:
-      name: "temperature sensor 1"
+      name: "temperature1 B+"
       device_id: device0
     temperature_sensor_2:
-      name: "temperature sensor 2"
+      name: "temperature2 B-"
       device_id: device0
     temperature_sensor_3:
-      name: "temperature sensor 3"
+      name: "temperature3 Center Bus Bar"
       device_id: device0
     temperature_sensor_4:
-      name: "temperature sensor 4"
+      name: "temperature4 P-"
       device_id: device0
     temperature_sensor_5:
       name: "temperature sensor 5"
@@ -1121,16 +1121,16 @@ sensor:
       name: "energy capacity"
       device_id: device1
     temperature_sensor_1:
-      name: "temperature sensor 1"
+      name: "temperature1 B+"
       device_id: device1
     temperature_sensor_2:
-      name: "temperature sensor 2"
+      name: "temperature2 B-"
       device_id: device1
     temperature_sensor_3:
-      name: "temperature sensor 3"
+      name: "temperature3 Center Bus Bar"
       device_id: device1
     temperature_sensor_4:
-      name: "temperature sensor 4"
+      name: "temperature4 P-"
       device_id: device1
     temperature_sensor_5:
       name: "temperature sensor 5"
