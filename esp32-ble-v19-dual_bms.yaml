@@ -9,6 +9,8 @@ substitutions:
   # Please use "JK04" if you have some old JK-BMS <= hardware version 3.0 (f.e. JK-B2A16S hw 3.0, sw. 3.3.0)
   bms0_protocol_version: JK02_32S
   bms1_protocol_version: JK02_32S
+  # Domaine DNS local (voir wifi: domain: plus bas et le capteur "hostname")
+  dns_domain: ".internal"
 
 esphome:
   name: ${name}
@@ -56,6 +58,14 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   min_auth_mode: WPA2
+  # Suffixe DNS local du réseau (routeur OPNsense) : les noms d'hôtes locaux
+  # sont servis par Unbound en ".internal", ".local" restant réservé au
+  # mDNS/Bonjour. Les outils ESPHome (OTA, logs, détection "en ligne" du
+  # dashboard) viseront donc "jk-bms.internal". Le composant mdns: reste actif
+  # par défaut : ".local" continue de répondre sur le même sous-réseau.
+  # Prérequis côté routeur : bail DHCP statique + enregistrement du nom dans
+  # Unbound (host override "jk-bms" / domaine "internal").
+  domain: ${dns_domain}
 
 ota:
   platform: esphome
@@ -144,7 +154,7 @@ interval:
                     snprintf(buf, sizeof(buf), "%.2f", id(bms1_energy_out_total).state);
                     return std::string(buf);
 
-# Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.local
+# Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.internal
 web_server:
   version: 3
 
@@ -227,6 +237,11 @@ binary_sensor:
     dry_contact_2:
       name: "dry contact 2"
       device_id: device1
+
+  # Capteur réseau : connectivité du module lui-même (pas des BMS), vue par
+  # Home Assistant / le serveur web embarqué.
+  - platform: status
+    name: "network status"
 
 button:
   - platform: jk_bms_ble
@@ -704,6 +719,30 @@ number:
     icon: "mdi:timer-outline"
 
 sensor:
+  # --- Capteurs réseau (diagnostic) --------------------------------------
+  # Qualité du lien WiFi et disponibilité du module. Utile depuis la bascule
+  # du réseau en ".internal" : permet de distinguer "BMS injoignable en BLE"
+  # de "module injoignable sur le réseau".
+  - platform: wifi_signal
+    name: "wifi signal"
+    id: wifi_rssi
+    update_interval: 60s
+    entity_category: diagnostic
+  # Même mesure en pourcentage (-100 dBm = 0 %, -50 dBm = 100 %)
+  - platform: copy
+    source_id: wifi_rssi
+    name: "wifi signal percent"
+    unit_of_measurement: "%"
+    device_class: ""
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+  - platform: uptime
+    name: "uptime"
+    update_interval: 60s
+    entity_category: diagnostic
+
   - platform: jk_bms_ble
     jk_bms_ble_id: bms0
     min_cell_voltage:
@@ -1568,6 +1607,36 @@ select:
       device_id: device1
 
 text_sensor:
+  # --- Capteurs réseau (diagnostic) --------------------------------------
+  - platform: wifi_info
+    ip_address:
+      name: "ip address"
+      entity_category: diagnostic
+    mac_address:
+      name: "mac address"
+      entity_category: diagnostic
+    ssid:
+      name: "wifi ssid"
+      entity_category: diagnostic
+    bssid:
+      name: "wifi bssid"
+      entity_category: diagnostic
+    dns_address:
+      name: "dns address"
+      entity_category: diagnostic
+  # Nom pleinement qualifié tel que les outils ESPHome/HA doivent l'utiliser
+  # (contrôle visuel de la bascule .local -> .internal).
+  - platform: template
+    name: "hostname"
+    entity_category: diagnostic
+    icon: "mdi:dns"
+    update_interval: 60s
+    lambda: |-
+      return {std::string(App.get_name()) + "${dns_domain}"};
+  - platform: version
+    name: "esphome version"
+    entity_category: diagnostic
+
   - platform: jk_bms_ble
     jk_bms_ble_id: bms0
     errors:
