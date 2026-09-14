@@ -1,0 +1,817 @@
+substitutions:
+  name: jk-bms-48v15kwh
+  device_description: "Monitor and control JK-BMS v19 via bluetooth"
+  external_components_source: github://C00L4LIFE/esphome-jk-bms@main
+  # Please use "JK02_24S" if you own a old JK-BMS < hardware version 11.0 (hardware version >= 6.0 and < 11.0)
+  # Please use "JK02_32S" if you own a new JK-BMS >= hardware version 11.0 (f.e. JK-B2A8S20P hw 11.XW, sw 11.26)
+  # Please use "JK04" if you have some old JK-BMS <= hardware version 3.0 (f.e. JK-B2A16S hw 3.0, sw. 3.3.0)
+  bms_protocol_version: JK02_32S
+  # Domaine DNS local (voir wifi: domain: plus bas et le capteur "hostname")
+  dns_domain: ".internal"
+
+esphome:
+  name: ${name}
+  friendly_name: ${name}
+  comment: ${device_description}
+  project:
+    name: "syssi.esphome-jk-bms"
+    version: 3.0.0
+  devices:
+    - id: device0
+      name: "${name}"
+  on_boot:
+    # Restauration immédiate des compteurs d'énergie depuis la NVS (copie
+    # locale) : les totaux sont corrects dès le boot, même si Home Assistant
+    # est injoignable. La valeur du helper HA, quand elle arrive, ne peut que
+    # relever l'offset (fusion max, voir les imports homeassistant plus bas).
+    priority: -100
+    then:
+      - lambda: |-
+          id(pin_offset) = id(nvs_pin);
+          id(pout_offset) = id(nvs_pout);
+
+# Sauvegarde NVS des compteurs : écriture au plus toutes les 6 h (4/jour,
+# usure négligeable sur des décennies) + flush automatique à chaque reboot
+# propre (OTA, restart) par le syncer de préférences. La flash n'est donc
+# sollicitée que rarement, contrairement à une persistance à la seconde.
+preferences:
+  flash_write_interval: 6h
+
+esp32:
+  #board: wemos_d1_mini32
+  variant: esp32
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: ${external_components_source}
+    refresh: 0s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  # Suffixe DNS local du réseau (routeur OPNsense) : les noms d'hôtes locaux
+  # sont servis par Unbound en ".internal", ".local" restant réservé au
+  # mDNS/Bonjour. Les outils ESPHome (OTA, logs, détection "en ligne" du
+  # dashboard) viseront donc "jk-bms.internal". Le composant mdns: reste actif
+  # par défaut : ".local" continue de répondre sur le même sous-réseau.
+  # Prérequis côté routeur : bail DHCP statique + enregistrement du nom dans
+  # Unbound (host override "jk-bms" / domaine "internal").
+  domain: ${dns_domain}
+
+ota:
+  platform: esphome
+  on_begin:
+    then:
+      - switch.turn_off: ble_client_switch
+      - logger.log: "BLE connection suspended for OTA update"
+
+logger:
+  level: DEBUG
+  logs:
+    esp32_ble_tracker: INFO
+    esp32_ble_client: INFO
+
+# If you don't use Home Assistant please remove this `api` section and uncomment the `mqtt` component!
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# Mémoire réseau des compteurs d'énergie cumulés (energy in/out total) : rien
+# n'est persisté en flash (vieillissement NVS). Le stockage est fait dans
+# 2 helpers input_number de Home Assistant (jamais "unavailable", contrairement
+# aux entités du device qui perdent leur état à chaque reboot) :
+#   input_number.jk_bms_energy_in    input_number.jk_bms_energy_out
+# L'ESP les met à jour toutes les 30 s par appel de service (nécessite
+# d'autoriser le device à exécuter des actions HA : Paramètres > Appareils >
+# ESPHome > jk-bms > Configurer > "Allow the device to perform actions").
+# Au boot, il relit le helper (import ci-dessous) et restaure l'offset en
+# one-shot. Pas de composant MQTT : ses ~150 wrappers d'entités obligatoires
+# épuisaient le heap (crash LoadProhibited + échecs de handshake WiFi).
+interval:
+  # Toutes les 30 s : (1) copie du total dans la variable NVS — sans garde,
+  # car l'offset intègre déjà l'historique NVS dès le boot, le total courant
+  # est donc toujours >= à la valeur stockée ; l'écriture flash réelle reste
+  # limitée par flash_write_interval (6 h) ou au shutdown. (2) Miroir vers les
+  # helpers HA, gardé par les flags "restored" pour ne jamais écraser la
+  # mémoire réseau avec un compteur repartant de zéro avant restauration.
+  - interval: 30s
+    then:
+      - lambda: |-
+          auto keep = [](float &dst, float v) { if (std::isfinite(v)) dst = v; };
+          keep(id(nvs_pin), id(bms_energy_in_total).state);
+          keep(id(nvs_pout), id(bms_energy_out_total).state);
+      - if:
+          condition:
+            lambda: 'return id(pin_restored) && id(pout_restored);'
+          then:
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_energy_in
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms_energy_in_total).state);
+                    return std::string(buf);
+            - homeassistant.action:
+                action: input_number.set_value
+                data:
+                  entity_id: input_number.jk_bms_energy_out
+                  value: !lambda |-
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.2f", id(bms_energy_out_total).state);
+                    return std::string(buf);
+
+# Built-in dashboard to view and control all entities below from a browser, f.e. http://jk-bms.internal
+web_server:
+  version: 3
+
+# Needed for the "charge/discharge finish time" text sensors below. SNTP works standalone
+# (WiFi + internet only). If you use Home Assistant you can use its clock instead:
+#   - platform: homeassistant
+#     id: rtc_time
+time:
+  - platform: sntp
+    id: rtc_time
+    timezone: America/Port-au-Prince
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+
+ble_client:
+  - mac_address: !secret bms_mac_address
+    id: client
+
+jk_bms_ble:
+  - ble_client_id: client
+    protocol_version: ${bms_protocol_version}
+    throttle: 5s
+    id: bms
+    time_id: rtc_time
+
+binary_sensor:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    balancing:
+      name: "balancing"
+    charging:
+      name: "charging"
+    discharging:
+      name: "discharging"
+    heating:
+      name: "heating"
+    online_status:
+      name: "online status"
+    dry_contact_1:
+      name: "dry contact 1"
+    dry_contact_2:
+      name: "dry contact 2"
+
+  # Capteur réseau : connectivité du module lui-même, vue par
+  # Home Assistant / le serveur web embarqué.
+  - platform: status
+    name: "network status"
+
+button:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    retrieve_settings:
+      name: "retrieve settings"
+    retrieve_device_info:
+      name: "retrieve device info"
+    retrieve_logbook:
+      name: "retrieve logbook"
+    shutdown:
+      name: "shutdown"
+    restart:
+      name: "restart"
+    factory_reset:
+      name: "factory reset"
+
+  # Remise à zéro des compteurs d'énergie cumulés (energy in/out total).
+  # L'offset devient l'opposé de l'accumulé C++ courant (le total retombe à 0
+  # sans redémarrer le module) et les helpers HA sont immédiatement remis à 0
+  # pour que l'ancienne valeur ne revienne pas au prochain boot.
+  - platform: template
+    name: "reset energy counters"
+    entity_category: config
+    icon: "mdi:counter"
+    on_press:
+      - lambda: |-
+          float in_raw = id(bms_energy_in_raw).state;
+          float out_raw = id(bms_energy_out_raw).state;
+          id(pin_offset) = isnan(in_raw) ? 0 : -in_raw;
+          id(pout_offset) = isnan(out_raw) ? 0 : -out_raw;
+          id(pin_restored) = true;
+          id(pout_restored) = true;
+          id(nvs_pin) = 0;
+          id(nvs_pout) = 0;
+          global_preferences->sync();
+          id(bms_energy_in_total).update();
+          id(bms_energy_out_total).update();
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_energy_in
+            value: "0"
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.jk_bms_energy_out
+            value: "0"
+
+# Tables circulaires du lissage de puissance batterie (une seule table maintenant).
+# Implémentée à la main (plutôt que sliding_window_moving_average) parce que la 
+# taille de fenêtre et l'intervalle du filtre ESPHome sont figés à la compilation, 
+# alors qu'ici ils sont réglables à chaud via les numbers "Batterie Lissage ..." ci-dessous.
+globals:
+  - id: pw_avg_buffer
+    type: float[100]
+  - id: pw_avg_idx
+    type: int
+    initial_value: '0'
+  - id: pw_avg_count
+    type: int
+    initial_value: '0'
+  - id: pw_avg_last_ms
+    type: uint32_t
+    initial_value: '0'
+  # Persistance réseau des compteurs d'énergie : offset = valeur restaurée du
+  # broker MQTT au boot (peut devenir négatif après un reset), restored = flag
+  # one-shot pour n'accepter que le premier message retenu après démarrage.
+  - id: pin_offset
+    type: float
+    initial_value: '0'
+  - id: pout_offset
+    type: float
+    initial_value: '0'
+  - id: pin_restored
+    type: bool
+    initial_value: 'false'
+  - id: pout_restored
+    type: bool
+    initial_value: 'false'
+  # Copie NVS des totaux (2e source de mémoire, locale). Mise à jour en RAM
+  # toutes les 30 s ; l'écriture flash réelle n'a lieu qu'aux 6 h (voir
+  # preferences:) ou au shutdown propre. restore_value la recharge au boot.
+  - id: nvs_pin
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: nvs_pout
+    type: float
+    restore_value: true
+    initial_value: '0'
+
+number:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    balance_trigger_voltage:
+      name: "balance trigger voltage"
+    cell_count:
+      name: "cell count"
+    total_battery_capacity:
+      name: "total battery capacity"
+    cell_voltage_overvoltage_protection:
+      name: "cell voltage overvoltage protection"
+    cell_voltage_overvoltage_recovery:
+      name: "cell voltage overvoltage recovery"
+    cell_voltage_undervoltage_protection:
+      name: "cell voltage undervoltage protection"
+    cell_voltage_undervoltage_recovery:
+      name: "cell voltage undervoltage recovery"
+    balancing_start_voltage:
+      name: "balancing start voltage"
+    voltage_calibration:
+      name: "voltage calibration"
+    current_calibration:
+      name: "current calibration"
+    power_off_voltage:
+      name: "power off voltage"
+    max_balance_current:
+      name: "max balance current"
+    max_charge_current:
+      name: "max charge current"
+    max_discharge_current:
+      name: "max discharge current"
+    smart_sleep_voltage:
+      name: "smart sleep voltage"
+    smart_sleep_delay:
+      name: "smart sleep delay"
+    emergency_duration:
+      name: "emergency duration"
+    cell_soc100_voltage:
+      name: "cell soc100 voltage"
+    cell_soc0_voltage:
+      name: "cell soc0 voltage"
+    cell_request_charge_voltage:
+      name: "cell request charge voltage"
+    cell_request_float_voltage:
+      name: "cell request float voltage"
+    cell_request_charge_voltage_time:
+      name: "cell request charge voltage time"
+    cell_request_float_voltage_time:
+      name: "cell request float voltage time"
+    re_bulk_soc:
+      name: "re-bulk soc"
+    charge_overcurrent_protection_delay:
+      name: "charge overcurrent protection delay"
+    charge_overcurrent_protection_recovery_time:
+      name: "charge overcurrent protection recovery time"
+    discharge_overcurrent_protection_delay:
+      name: "discharge overcurrent protection delay"
+    discharge_overcurrent_protection_recovery_time:
+      name: "discharge overcurrent protection recovery time"
+    short_circuit_protection_delay:
+      name: "short circuit protection delay"
+    short_circuit_protection_recovery_time:
+      name: "short circuit protection recovery time"
+    charge_overtemperature_protection:
+      name: "charge overtemperature protection"
+    charge_overtemperature_protection_recovery:
+      name: "charge overtemperature protection recovery"
+    discharge_overtemperature_protection:
+      name: "discharge overtemperature protection"
+    discharge_overtemperature_protection_recovery:
+      name: "discharge overtemperature protection recovery"
+    charge_undertemperature_protection:
+      name: "charge undertemperature protection"
+    charge_undertemperature_protection_recovery:
+      name: "charge undertemperature protection recovery"
+    discharge_undertemperature_protection:
+      name: "discharge undertemperature protection"
+    discharge_undertemperature_protection_recovery:
+      name: "discharge undertemperature protection recovery"
+    mosfet_overtemperature_protection:
+      name: "mosfet overtemperature protection"
+    mosfet_overtemperature_protection_recovery:
+      name: "mosfet overtemperature protection recovery"
+    discharge_precharge_time:
+      name: "discharge precharge time"
+    heating_start_temperature:
+      name: "heating start temperature"
+    heating_stop_temperature:
+      name: "heating stop temperature"
+
+  # Nombre de lectures moyennées (taille de fenêtre effective).
+  # La table fait toujours 100 cases ; réduire la fenêtre n'utilise que les N plus récentes.
+  - platform: template
+    name: "Batterie Lissage Fenêtre"
+    id: pw_avg_window
+    min_value: 1
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    mode: box
+    icon: "mdi:chart-bell-curve"
+
+  # Intervalle entre deux lectures.
+  # Fenêtre x intervalle = durée de lissage (100 x 1 s = ~1 min 40).
+  - platform: template
+    name: "Batterie Lissage Intervalle"
+    id: pw_avg_interval
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 1
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    unit_of_measurement: s
+    mode: box
+    icon: "mdi:timer-outline"
+
+sensor:
+  # --- Capteurs réseau (diagnostic) --------------------------------------
+  # Qualité du lien WiFi et disponibilité du module. Utile depuis la bascule
+  # du réseau en ".internal" : permet de distinguer "BMS injoignable en BLE"
+  # de "module injoignable sur le réseau".
+  - platform: wifi_signal
+    name: "wifi signal"
+    id: wifi_rssi
+    update_interval: 60s
+    entity_category: diagnostic
+  # Même mesure en pourcentage (-100 dBm = 0 %, -50 dBm = 100 %)
+  - platform: copy
+    source_id: wifi_rssi
+    name: "wifi signal percent"
+    unit_of_measurement: "%"
+    device_class: ""
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+  - platform: uptime
+    name: "uptime"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    min_cell_voltage:
+      name: "min cell voltage"
+    max_cell_voltage:
+      name: "max cell voltage"
+    min_voltage_cell:
+      name: "min voltage cell"
+    max_voltage_cell:
+      name: "max voltage cell"
+    delta_cell_voltage:
+      name: "delta cell voltage"
+    average_cell_voltage:
+      name: "average cell voltage"
+    cell_voltage_1:
+      name: "cell voltage 1"
+    cell_voltage_2:
+      name: "cell voltage 2"
+    cell_voltage_3:
+      name: "cell voltage 3"
+    cell_voltage_4:
+      name: "cell voltage 4"
+    cell_voltage_5:
+      name: "cell voltage 5"
+    cell_voltage_6:
+      name: "cell voltage 6"
+    cell_voltage_7:
+      name: "cell voltage 7"
+    cell_voltage_8:
+      name: "cell voltage 8"
+    cell_voltage_9:
+      name: "cell voltage 9"
+    cell_voltage_10:
+      name: "cell voltage 10"
+    cell_voltage_11:
+      name: "cell voltage 11"
+    cell_voltage_12:
+      name: "cell voltage 12"
+    cell_voltage_13:
+      name: "cell voltage 13"
+    cell_voltage_14:
+      name: "cell voltage 14"
+    cell_voltage_15:
+      name: "cell voltage 15"
+    cell_voltage_16:
+      name: "cell voltage 16"
+    #cell_voltage_17:
+    #  name: "cell voltage 17"
+    #cell_voltage_18:
+    #  name: "cell voltage 18"
+    #cell_voltage_19:
+    #  name: "cell voltage 19"
+    #cell_voltage_20:
+    #  name: "cell voltage 20"
+    #cell_voltage_21:
+    #  name: "cell voltage 21"
+    #cell_voltage_22:
+    #  name: "cell voltage 22"
+    #cell_voltage_23:
+    #  name: "cell voltage 23"
+    #cell_voltage_24:
+    #  name: "cell voltage 24"
+    cell_resistance_1:
+      name: "cell resistance 1"
+    cell_resistance_2:
+      name: "cell resistance 2"
+    cell_resistance_3:
+      name: "cell resistance 3"
+    cell_resistance_4:
+      name: "cell resistance 4"
+    cell_resistance_5:
+      name: "cell resistance 5"
+    cell_resistance_6:
+      name: "cell resistance 6"
+    cell_resistance_7:
+      name: "cell resistance 7"
+    cell_resistance_8:
+      name: "cell resistance 8"
+    cell_resistance_9:
+      name: "cell resistance 9"
+    cell_resistance_10:
+      name: "cell resistance 10"
+    cell_resistance_11:
+      name: "cell resistance 11"
+    cell_resistance_12:
+      name: "cell resistance 12"
+    cell_resistance_13:
+      name: "cell resistance 13"
+    cell_resistance_14:
+      name: "cell resistance 14"
+    cell_resistance_15:
+      name: "cell resistance 15"
+    cell_resistance_16:
+      name: "cell resistance 16"
+    #cell_resistance_17:
+    #  name: "cell resistance 17"
+    #cell_resistance_18:
+    #  name: "cell resistance 18"
+    #cell_resistance_19:
+    #  name: "cell resistance 19"
+    #cell_resistance_20:
+    #  name: "cell resistance 20"
+    #cell_resistance_21:
+    #  name: "cell resistance 21"
+    #cell_resistance_22:
+    #  name: "cell resistance 22"
+    #cell_resistance_23:
+    #  name: "cell resistance 23"
+    #cell_resistance_24:
+    #  name: "cell resistance 24"
+    total_voltage:
+      name: "total voltage"
+    current:
+      name: "current"
+    heating_current:
+      name: "heating current"
+    power:
+      name: "power"
+      id: bms_power
+    charging_power:
+      name: "charging power"
+    discharging_power:
+      name: "discharging power"
+    energy_in:
+      name: "energy in"
+      id: bms_energy_in_raw
+      internal: true
+    energy_out:
+      name: "energy out"
+      id: bms_energy_out_raw
+      internal: true
+    energy_remaining:
+      name: "energy remaining"
+    energy_capacity:
+      name: "energy capacity"
+    temperature_sensor_1:
+      name: "temperature1 B+"
+    temperature_sensor_2:
+      name: "temperature2 B-"
+    temperature_sensor_3:
+      name: "temperature3 Center Bus Bar"
+    temperature_sensor_4:
+      name: "temperature4 P-"
+    temperature_sensor_5:
+      name: "temperature sensor 5"
+    mosfet_temperature:
+      name: "mosfet temperature"
+    balancer_status_bitmask:
+      name: "balancer status bitmask"
+    state_of_charge:
+      name: "state of charge"
+    state_of_health:
+      name: "state of health"
+    capacity_remaining:
+      name: "capacity remaining"
+    full_charge_capacity:
+      name: "full charge capacity"
+    charge_time_remaining:
+      name: "charge time remaining"
+    discharge_time_remaining:
+      name: "discharge time remaining"
+    charging_cycles:
+      name: "charging cycles"
+    total_charging_cycle_capacity:
+      name: "total charging cycle capacity"
+    total_runtime:
+      name: "total runtime"
+    balancing_current:
+      name: "balancing current"
+    emergency_time_countdown:
+      name: "emergency time countdown"
+    smart_sleep_countdown:
+      name: "smart sleep countdown"
+    charge_status_id:
+      name: "charge status id"
+    charge_status_time_elapsed:
+      name: "charge status time elapsed"
+    detail_log_entry_count:
+      name: "detail log entry count"
+    battery_type_id:
+      name: "battery type id"
+    uart1_protocols_enabled_bitmask:
+      name: "uart1 protocols enabled bitmask"
+    uart2_protocols_enabled_bitmask:
+      name: "uart2 protocols enabled bitmask"
+    uart3_protocols_enabled_bitmask:
+      name: "uart3 protocols enabled bitmask"
+    can_protocols_enabled_bitmask:
+      name: "can protocols enabled bitmask"
+
+  # Puissance signée (+ = charge) lissée sur la table circulaire : une
+  # lecture par intervalle dans la case 0..99 (retour à 0 après 99), moyenne =
+  # somme des cases / nombre de cases ; tant que la table n'est pas pleine,
+  # seules les cases alimentées comptent.
+  - platform: template
+    name: "power average"
+    id: bms_power_avg
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      float v = id(bms_power).state;
+      if (isnan(v)) return {};
+      uint32_t now = millis();
+      uint32_t interval_ms = (uint32_t) id(pw_avg_interval).state * 1000;
+      if (interval_ms < 1000) interval_ms = 1000;
+      if (id(pw_avg_count) > 0 && (now - id(pw_avg_last_ms)) < interval_ms)
+        return {};  // pas encore l'heure d'échantillonner
+      id(pw_avg_last_ms) = now;
+      id(pw_avg_buffer)[id(pw_avg_idx)] = v;
+      id(pw_avg_idx) = (id(pw_avg_idx) + 1) % 100;
+      if (id(pw_avg_count) < 100)
+        id(pw_avg_count) += 1;
+      int window = (int) id(pw_avg_window).state;
+      if (window < 1) window = 1;
+      if (window > 100) window = 100;
+      int n = id(pw_avg_count) < window ? id(pw_avg_count) : window;
+      float sum = 0;
+      int pos = id(pw_avg_idx);
+      for (int i = 0; i < n; i++) {
+        pos = (pos + 99) % 100;  // recule d'une case (les n plus récentes)
+        sum += id(pw_avg_buffer)[pos];
+      }
+      return sum / n;
+
+  # Restauration réseau : import des helpers input_number de HA (2e source de
+  # mémoire). One-shot par compteur — seule la première valeur valide reçue
+  # après démarrage est fusionnée ; les mises à jour suivantes (dont l'écho de
+  # notre propre miroir 30 s) sont ignorées. Fusion par max() avec l'offset
+  # déjà restauré de la NVS au boot : la valeur HA ne peut que relever le
+  # total, jamais le faire reculer ni le doubler.
+  - platform: homeassistant
+    id: ha_pin
+    entity_id: input_number.jk_bms_energy_in
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(pin_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(pin_offset) = std::max(id(pin_offset), x);
+            id(pin_restored) = true;
+  - platform: homeassistant
+    id: ha_pout
+    entity_id: input_number.jk_bms_energy_out
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (id(pout_restored)) return;
+            if (!std::isfinite(x) || x < 0) return;
+            id(pout_offset) = std::max(id(pout_offset), x);
+            id(pout_restored) = true;
+
+  # Compteurs d'énergie cumulés persistants : total = offset restauré du helper
+  # HA (mémoire réseau) + accumulé C++ depuis le boot. Le capteur brut repart
+  # de 0 à chaque redémarrage, l'offset absorbe l'historique : le total ne
+  # recule jamais (clamp >= 0, reset explicite via les boutons ci-dessous).
+  - platform: template
+    name: "energy in total"
+    id: bms_energy_in_total
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms_energy_in_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(pin_offset) + raw;
+      return total < 0 ? 0 : total;
+  - platform: template
+    name: "energy out total"
+    id: bms_energy_out_total
+    unit_of_measurement: Wh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      float raw = id(bms_energy_out_raw).state;
+      if (isnan(raw)) raw = 0;
+      float total = id(pout_offset) + raw;
+      return total < 0 ? 0 : total;
+
+switch:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    charging:
+      name: "charging"
+    discharging:
+      name: "discharging"
+    balancer:
+      name: "balancer"
+    emergency:
+      name: "emergency"
+    heating:
+      name: "heating"
+    disable_temperature_sensors:
+      name: "disable temperature sensors"
+    display_always_on:
+      name: "display always on"
+    smart_sleep:
+      name: "smart sleep"
+    disable_pcl_module:
+      name: "disable pcl module"
+    timed_stored_data:
+      name: "timed stored data"
+    charging_float_mode:
+      name: "charging float mode"
+    emergency_button_trigger:
+      name: "emergency button trigger"
+    dry_contact_alarm_intermittent:
+      name: "dry contact alarm intermittent"
+    discharge_overcurrent_protection_2:
+      name: "discharge overcurrent protection 2"
+    discharge_overcurrent_protection_3:
+      name: "discharge overcurrent protection 3"
+    gps_locked_charging:
+      name: "gps locked charging"
+    gps_locked_discharging:
+      name: "gps locked discharging"
+
+  - platform: ble_client
+    ble_client_id: client
+    name: "enable bluetooth connection"
+    id: ble_client_switch
+
+select:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    uart1_protocol:
+      name: "uart1 protocol"
+    uart2_protocol:
+      name: "uart2 protocol"
+    uart3_protocol:
+      name: "uart3 protocol"
+    can_protocol:
+      name: "can protocol"
+    lcd_buzzer_trigger:
+      name: "lcd buzzer trigger"
+    dry1_trigger:
+      name: "dry1 trigger"
+    dry2_trigger:
+      name: "dry2 trigger"
+    multiplexed_port_mode:
+      name: "protocol mode"
+    load_config_preset:
+      name: "load config preset"
+
+text_sensor:
+  # --- Capteurs réseau (diagnostic) --------------------------------------
+  - platform: wifi_info
+    ip_address:
+      name: "ip address"
+      entity_category: diagnostic
+    mac_address:
+      name: "mac address"
+      entity_category: diagnostic
+    ssid:
+      name: "wifi ssid"
+      entity_category: diagnostic
+    bssid:
+      name: "wifi bssid"
+      entity_category: diagnostic
+    dns_address:
+      name: "dns address"
+      entity_category: diagnostic
+  # Nom pleinement qualifié tel que les outils ESPHome/HA doivent l'utiliser
+  # (contrôle visuel de la bascule .local -> .internal).
+  - platform: template
+    name: "hostname"
+    entity_category: diagnostic
+    icon: "mdi:dns"
+    update_interval: 60s
+    lambda: |-
+      return {std::string(App.get_name()) + "${dns_domain}"};
+  - platform: version
+    name: "esphome version"
+    entity_category: diagnostic
+
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms
+    errors:
+      name: "errors"
+    errors_bitmask_hex:
+      name: "errors bitmask hex"
+    balancer_status:
+      name: "balancer status"
+    total_runtime_formatted:
+      name: "total runtime formatted"
+    charge_status:
+      name: "charge status"
+    software_version:
+      name: "software version"
+    hardware_version:
+      name: "hardware version"
+    battery_type:
+      name: "battery type"
+    charge_finish_time:
+      name: "charge finish time"
+    discharge_finish_time:
+      name: "discharge finish time"
