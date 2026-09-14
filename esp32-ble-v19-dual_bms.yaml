@@ -1100,22 +1100,30 @@ sensor:
     cell_resistance_8:
       name: "cell resistance 8"
       device_id: device1
-    #cell_resistance_9:
-    #  name: "cell resistance 9"
-    #cell_resistance_10:
-    #  name: "cell resistance 10"
-    #cell_resistance_11:
-    #  name: "cell resistance 11"
-    #cell_resistance_12:
-    #  name: "cell resistance 12"
-    #cell_resistance_13:
-    #  name: "cell resistance 13"
-    #cell_resistance_14:
-    #  name: "cell resistance 14"
-    #cell_resistance_15:
-    #  name: "cell resistance 15"
-    #cell_resistance_16:
-    #  name: "cell resistance 16"
+    cell_resistance_9:
+      name: "cell resistance 9"
+      device_id: device1
+    cell_resistance_10:
+      name: "cell resistance 10"
+      device_id: device1
+    cell_resistance_11:
+      name: "cell resistance 11"
+      device_id: device1
+    cell_resistance_12:
+      name: "cell resistance 12"
+      device_id: device1
+    cell_resistance_13:
+      name: "cell resistance 13"
+      device_id: device1
+    cell_resistance_14:
+      name: "cell resistance 14"
+      device_id: device1
+    cell_resistance_15:
+      name: "cell resistance 15"
+      device_id: device1
+    cell_resistance_16:
+      name: "cell resistance 16"
+      device_id: device1
     #cell_resistance_17:
     #  name: "cell resistance 17"
     #cell_resistance_18:
