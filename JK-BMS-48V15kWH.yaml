@@ -1,5 +1,6 @@
 substitutions:
-  name: jk-bms-48v15kwh
+  #name: jk-bms-48v15kwh
+  name: jk-bms
   device_description: "Monitor and control JK-BMS v19 via bluetooth"
   external_components_source: github://C00L4LIFE/esphome-jk-bms@main
   # Please use "JK02_24S" if you own a old JK-BMS < hardware version 11.0 (hardware version >= 6.0 and < 11.0)
