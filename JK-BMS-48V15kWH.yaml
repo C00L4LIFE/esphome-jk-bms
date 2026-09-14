@@ -141,7 +141,7 @@ esp32_ble_tracker:
     active: false
 
 ble_client:
-  - mac_address: !secret bms_mac_address
+  - mac_address: !secret bms1_mac_address
     id: client
 
 jk_bms_ble:
