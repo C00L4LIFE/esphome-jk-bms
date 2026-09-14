@@ -787,30 +787,22 @@ sensor:
     cell_voltage_8:
       name: "cell voltage 8"
       device_id: device0
-    cell_voltage_9:
-      name: "cell voltage 9"
-      device_id: device0
-    cell_voltage_10:
-      name: "cell voltage 10"
-      device_id: device0
-    cell_voltage_11:
-      name: "cell voltage 11"
-      device_id: device0
-    cell_voltage_12:
-      name: "cell voltage 12"
-      device_id: device0
-    cell_voltage_13:
-      name: "cell voltage 13"
-      device_id: device0
-    cell_voltage_14:
-      name: "cell voltage 14"
-      device_id: device0
-    cell_voltage_15:
-      name: "cell voltage 15"
-      device_id: device0
-    cell_voltage_16:
-      name: "cell voltage 16"
-      device_id: device0
+    #cell_voltage_9:
+    #  name: "cell voltage 9"
+    #cell_voltage_10:
+    #  name: "cell voltage 10"
+    #cell_voltage_11:
+    #  name: "cell voltage 11"
+    #cell_voltage_12:
+    #  name: "cell voltage 12"
+    #cell_voltage_13:
+    #  name: "cell voltage 13"
+    #cell_voltage_14:
+    #  name: "cell voltage 14"
+    #cell_voltage_15:
+    #  name: "cell voltage 15"
+    #cell_voltage_16:
+    #  name: "cell voltage 16"
     #cell_voltage_17:
     #  name: "cell voltage 17"
     #cell_voltage_18:
@@ -1044,22 +1036,30 @@ sensor:
     cell_voltage_8:
       name: "cell voltage 8"
       device_id: device1
-    #cell_voltage_9:
-    #  name: "cell voltage 9"
-    #cell_voltage_10:
-    #  name: "cell voltage 10"
-    #cell_voltage_11:
-    #  name: "cell voltage 11"
-    #cell_voltage_12:
-    #  name: "cell voltage 12"
-    #cell_voltage_13:
-    #  name: "cell voltage 13"
-    #cell_voltage_14:
-    #  name: "cell voltage 14"
-    #cell_voltage_15:
-    #  name: "cell voltage 15"
-    #cell_voltage_16:
-    #  name: "cell voltage 16"
+    cell_voltage_9:
+      name: "cell voltage 9"
+      device_id: device1
+    cell_voltage_10:
+      name: "cell voltage 10"
+      device_id: device1
+    cell_voltage_11:
+      name: "cell voltage 11"
+      device_id: device1
+    cell_voltage_12:
+      name: "cell voltage 12"
+      device_id: device1
+    cell_voltage_13:
+      name: "cell voltage 13"
+      device_id: device1
+    cell_voltage_14:
+      name: "cell voltage 14"
+      device_id: device1
+    cell_voltage_15:
+      name: "cell voltage 15"
+      device_id: device1
+    cell_voltage_16:
+      name: "cell voltage 16"
+      device_id: device1
     #cell_voltage_17:
     #  name: "cell voltage 17"
     #cell_voltage_18:
